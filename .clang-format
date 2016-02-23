@@ -1,0 +1,13 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+
+AccessModifierOffset: -4
+AllowShortBlocksOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+BreakBeforeBraces: Mozilla
+DerivePointerAlignment: false
+IndentWidth: 4
+NamespaceIndentation: Inner
+PointerAlignment: Right
+SpacesBeforeTrailingComments: 2
