@@ -8,26 +8,28 @@
 //
 
 #include <APPX/XML.h>
-#include <stdexcept>
-#include <string>
+#include <unordered_map>
 
 namespace facebook {
 namespace appx {
     std::string XMLEncodeString(const std::string &s)
     {
-        // TODO(strager): Escape instead of raising an error.
-        static const char kWhitelist[] =
-            "abcdefghijklmnopqrstuvwxyz"
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "0123456789"
-            ".[]() _-+\\%";
-        std::string::size_type pos = s.find_first_not_of(kWhitelist);
-        if (pos != std::string::npos) {
-            throw std::runtime_error(
-                std::string("String contains unsupported character '") +
-                s[pos] + "': " + s);
+        static const std::unordered_map<char, const char *> sEncodeMap = {
+            {'"', "&quot;"}, {'&', "&amp;"}, {'\'', "&apos;"},
+            {'<', "&lt;"},   {'>', "&gt;"},
+        };
+
+        std::string encoded;
+        encoded.reserve(s.size());
+        for (char c : s) {
+            auto it = sEncodeMap.find(c);
+            if (it != sEncodeMap.end()) {
+                encoded += it->second;
+            } else {
+                encoded += c;
+            }
         }
-        return s;
+        return encoded;
     }
 }
 }
