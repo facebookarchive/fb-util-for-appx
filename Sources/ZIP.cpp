@@ -20,7 +20,15 @@ namespace appx {
             "abcdefghijklmnopqrstuvwxyz"
             "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
             "0123456789"
-            ".[]() _-/";
+            "-._~/";
+        static const char *kContentTypesFile = "[Content_Types].xml";
+
+        // [Content_Types.xml] is a special case: the [] in the name
+        // should not be escaped, otherwise the appx will be invalid
+        if (fileName == kContentTypesFile) {
+            return fileName;
+        }
+
         std::string s;
         s.reserve(fileName.size());
         for (char c : fileName) {
