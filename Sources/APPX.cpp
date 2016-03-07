@@ -112,8 +112,8 @@ namespace appx {
             digests.axbm = blockMap.sha256;
             zipFileEntries.emplace_back(std::move(blockMap));
 
-            ZIPFileEntry contentTypes =
-                WriteContentTypesZIPFileEntry(sink, zipOffsetSink.Offset());
+            ZIPFileEntry contentTypes = WriteContentTypesZIPFileEntry(
+                sink, zipOffsetSink.Offset(), zipFileEntries);
             digests.axct = contentTypes.sha256;
             zipFileEntries.emplace_back(std::move(contentTypes));
 

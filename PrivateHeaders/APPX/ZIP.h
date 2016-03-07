@@ -16,10 +16,14 @@
 #include <APPX/XML.h>
 #include <algorithm>
 #include <cassert>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <sstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 #include <zlib.h>
 
@@ -40,36 +44,6 @@ namespace appx {
         kFileExtractVersion = 20,
         kArchiveExtractVersion = 45,
     };
-
-    namespace {
-        // clang-format off
-        const char kContentTypesXML[] =
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
-            "<Types xmlns=\""
-                "http://schemas.openxmlformats.org/package/2006/"
-                "content-types\">"
-            "<Default Extension=\"png\" ContentType=\"image/png\"/>"
-            "<Default Extension=\"dll\" "
-                "ContentType=\"application/x-msdownload\" />"
-            "<Default Extension=\"exe\" "
-                "ContentType=\"application/x-msdownload\"/>"
-            "<Default Extension=\"pri\" "
-                "ContentType=\"application/octet-stream\"/>"
-            "<Default Extension=\"winmd\" "
-                "ContentType=\"application/octet-stream\"/>"
-            "<Default Extension=\"appxrecipe\" "
-                "ContentType=\"application/octet-stream\"/>"
-            "<Default Extension=\"xml\" "
-                "ContentType=\"application/vnd.ms-appx.manifest+xml\"/>"
-            "<Override PartName=\"/AppxBlockMap.xml\" "
-                "ContentType=\"application/vnd.ms-appx.blockmap+xml\"/>"
-            "<Override PartName=\"/AppxSignature.p7x\" "
-                "ContentType=\"application/vnd.ms-appx.signature\"/>"
-            "<Override PartName=\"/AppxMetadata/CodeIntegrity.cat\" "
-                "ContentType=\"application/vnd.ms-pkiseccat\"/>"
-            "</Types>";
-        // clang-format on
-    }
 
     enum class ZIPCompressionType : std::uint16_t
     {
@@ -249,11 +223,82 @@ namespace appx {
     }
 
     template <typename TSink>
-    ZIPFileEntry WriteContentTypesZIPFileEntry(TSink &sink, off_t offset)
+    ZIPFileEntry WriteContentTypesZIPFileEntry(
+        TSink &sink, off_t offset,
+        const std::vector<ZIPFileEntry> &otherEntries)
     {
+        // we only need the filenames from otherEntries
+        // [Content_Types].xml contains the ZIP-escaped
+        // names, hence the use of sanitizedFileName
+        static const std::unordered_map<std::string, const char *>
+            sKnownContentTypes = {
+                {"dll", "application/x-msdownload"},
+                {"exe", "application/x-msdownload"},
+                {"png", "image/png"},
+                {"xml", "application/vnd.ms-appx.manifest+xml"},
+            };
+        static const char *kDefaultContentType = "application/octet-stream";
+
+        std::ostringstream ss;
+        ss << "<?xml "
+           << "version=\"1.0\" "
+           << "encoding=\"UTF-8\" "
+           << "standalone=\"yes\"?>\r\n";
+        ss << "<Types "
+           << "xmlns=\"http://schemas.openxmlformats.org/package/2006/"
+              "content-types\">";
+
+        std::vector<std::string> writtenExtensions;
+        for (const ZIPFileEntry &entry : otherEntries) {
+            std::size_t baseNamePos = entry.sanitizedFileName.rfind('/') + 1;
+            std::size_t extensionPos = entry.sanitizedFileName.rfind('.') + 1;
+            bool hasExtension = extensionPos > baseNamePos;
+            if (hasExtension) {
+                std::string extension(
+                    entry.sanitizedFileName.cbegin() + extensionPos,
+                    entry.sanitizedFileName.cend());
+                bool notWritten =
+                    std::find(writtenExtensions.begin(),
+                              writtenExtensions.end(),
+                              extension) == writtenExtensions.end();
+                if (notWritten) {
+                    auto contentTypeIt = sKnownContentTypes.find(extension);
+                    const char *contentType;
+                    if (contentTypeIt != sKnownContentTypes.end()) {
+                        contentType = contentTypeIt->second;
+                    } else {
+                        contentType = kDefaultContentType;
+                    }
+                    ss << "<Default "
+                       << "Extension=\"" << XMLEncodeString(extension) << "\" "
+                       << "ContentType=\"" << XMLEncodeString(contentType)
+                       << "\"/>";
+                    writtenExtensions.push_back(extension);
+                }
+            } else {
+                ss << "<Override "
+                   << "PartName=\"/" << XMLEncodeString(entry.sanitizedFileName)
+                   << "\" "
+                   << "ContentType=\"" << XMLEncodeString(kDefaultContentType)
+                   << "\"/>";
+            }
+        }
+
+        ss << "<Override "
+           << "PartName=\"/AppxBlockMap.xml\" "
+           << "ContentType=\"application/vnd.ms-appx.blockmap+xml\"/>";
+        ss << "<Override "
+           << "PartName=\"/AppxSignature.p7x\" "
+           << "ContentType=\"application/vnd.ms-appx.signature\"/>";
+        ss << "<Override "
+           << "PartName=\"/AppxMetadata/CodeIntegrity.cat\" "
+           << "ContentType=\"application/vnd.ms-pkiseccat\"/>";
+        ss << "</Types>";
+
+        const std::string xml(ss.str());
         const std::uint8_t *xmlBytes =
-            reinterpret_cast<const std::uint8_t *>(kContentTypesXML);
-        size_t xmlSize = sizeof(kContentTypesXML) - 1;
+            reinterpret_cast<const std::uint8_t *>(xml.c_str());
+        std::size_t xmlSize = xml.size();
         CRC32Sink crc32Sink;
         crc32Sink.Write(xmlSize, xmlBytes);
         assert(xmlSize < std::numeric_limits<off_t>::max());
