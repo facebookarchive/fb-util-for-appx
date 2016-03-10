@@ -55,5 +55,13 @@ class TestZIPEscaping(unittest.TestCase):
             with zipfile.ZipFile(appx_path) as test_appx:
                 self.assertIn('[Content_Types].xml', test_appx.namelist())
 
+    def test_unicode_filename(self):
+        with appx.util.temp_dir() as d:
+            filename = u'\u00c0\u0800\U00010000'.encode('utf-8')
+            appx_path = self._create_appx_with_file(d, filename)
+            with zipfile.ZipFile(appx_path) as test_appx:
+                escaped_filename = self._get_escaped_filename(filename)
+                self.assertIn(escaped_filename, test_appx.namelist())
+
 if __name__ == '__main__':
     unittest.main()

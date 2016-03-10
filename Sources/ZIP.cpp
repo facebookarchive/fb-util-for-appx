@@ -35,8 +35,9 @@ namespace appx {
             if (std::strchr(kWhitelist, c)) {
                 s += c;
             } else {
-                char buffer[5];
-                int rc = std::snprintf(buffer, sizeof(buffer), "%%%02X", c);
+                char buffer[4];
+                int rc = std::snprintf(buffer, sizeof(buffer), "%%%02X",
+                                       static_cast<unsigned char>(c));
                 assert(rc == 3);
                 s += buffer;
             }
