@@ -306,6 +306,10 @@ namespace appx {
 
         void Write(std::size_t size, const std::uint8_t *bytes)
         {
+            if (size > 0) {
+                isEmpty = false;
+            }
+
             this->stream.next_in = const_cast<std::uint8_t *>(bytes);
             this->stream.avail_in = size;
             this->Deflate(Z_NO_FLUSH);
@@ -320,9 +324,11 @@ namespace appx {
 
         void Flush()
         {
-            this->stream.next_in = nullptr;
-            this->stream.avail_in = 0;
-            this->Deflate(Z_FULL_FLUSH);
+            if (!isEmpty) {
+                this->stream.next_in = nullptr;
+                this->stream.avail_in = 0;
+                this->Deflate(Z_FULL_FLUSH);
+            }
         }
 
     private:
@@ -343,6 +349,7 @@ namespace appx {
 
         TSink *sink;
         z_stream stream;
+        bool isEmpty = true;
     };
 
     template <typename TSink>
