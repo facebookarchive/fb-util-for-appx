@@ -252,18 +252,20 @@ void PrintUsage(const char *programName)
 {
     fprintf(stderr,
             "Usage: %s -o APPX [OPTION]... INPUT...\n"
-            "Creates an optionally-signed Microsoft APPX package.\n"
+            "Creates an optionally-signed Microsoft APPX or APPXBUNDLE package.\n"
             "\n"
-            "Options:\n"
-            "  -c pfx-file   sign the APPX with the private key file\n"
-            "  -f map-file   specify inputs from a mapping file\n"
-            "  -f -          specify a mapping file through standard input\n"
-            "  -h            show this usage text and exit\n"
-            "  -o appx-file  write the APPX to the file (required)\n"
+                "Options:\n"
+            "  -c pfx-file     sign the APPX with the private key file\n"
+            "  -f map-file     specify inputs from a mapping file\n"
+            "  -f -            specify a mapping file through standard input\n"
+            "  -h              show this usage text and exit\n"
+            "  -b              produce APPXBUNDLE instead of APPX\n"
+            "  -o output-file  write the APPX (or APPXBUNDLE if -b is specified) "
+            "                  to the output-file (required)\n"
             "  -0, -1, -2, -3, -4, -5, -6, -7, -8, -9\n"
-            "                ZIP compression level\n"
-            "  -0            no ZIP compression (store files)\n"
-            "  -9            best ZIP compression\n"
+            "                  ZIP compression level\n"
+            "  -0              no ZIP compression (store files)\n"
+            "  -9              best ZIP compression\n"
             "\n"
             "An input is either:\n"
             "  A directory, indicating that all files and subdirectories \n"
@@ -289,8 +291,9 @@ int main(int argc, char **argv) try {
     const char *certPath = NULL;
     const char *appxPath = NULL;
     int compressionLevel = Z_NO_COMPRESSION;
+    bool isBundle = false;
     std::unordered_map<std::string, std::string> fileNames;
-    while (int c = getopt(argc, argv, "0123456789c:f:ho:")) {
+    while (int c = getopt(argc, argv, "0123456789bc:f:ho:")) {
         if (c == -1) {
             break;
         }
@@ -306,6 +309,9 @@ int main(int argc, char **argv) try {
             case '8':
             case '9':
                 compressionLevel = c - '0';
+                break;
+            case 'b':
+                isBundle = true;
                 break;
             case 'c':
                 certPath = optarg;
@@ -364,10 +370,14 @@ int main(int argc, char **argv) try {
         PrintUsage(programName);
         return 1;
     }
+    if (isBundle && fileNames.count("AppxMetadata/AppxBundleManifest.xml") == 0) {
+        fprintf(stderr, "You need to provide AppxBundleManifest.xml!\n");
+        return 1;
+    }
     std::string certPathString = certPath ?: "";
     FilePtr appx = Open(appxPath, "wb");
     WriteAppx(appx, fileNames, certPath ? &certPathString : nullptr,
-              compressionLevel);
+              compressionLevel, isBundle);
     return 0;
 } catch (std::exception &e) {
     fprintf(stderr, "%s\n", e.what());

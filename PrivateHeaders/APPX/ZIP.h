@@ -19,6 +19,8 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -182,6 +184,52 @@ namespace appx {
         }
     };
 
+    inline bool _IsAPPXFile(const std::string &inputFileName)
+    {
+        const std::string suffix = ".appx";
+        return (
+            suffix.size() < inputFileName.size() &&
+            std::equal(suffix.rbegin(), suffix.rend(), inputFileName.rbegin()));
+    }
+
+    // For each of the appx files that we store in appxbundle, there is a
+    // corresponding
+    //   entry in AppxBundleManifest.xml. This entry (an XML node) contains the
+    //   "Offset"
+    //   property which specifies the header offset in the final appxbundle
+    //   file. Since this
+    //   value is not known before we create the appxbundle, we provide a
+    //   placeholder
+    //   that looks like "FileName.appx-offset". This placeholder suggests that
+    //   when packaging
+    //   and creating the appxbundle we need to replace "FileName.appx-offset"
+    //   with the
+    //   number that represents the offset for FileName.appx.
+    inline std::string _ManifestContentsAfterPopulatingOffsets(
+        const std::string &manifestInputFileName,
+        const std::vector<ZIPFileEntry> &otherEntries)
+    {
+        std::ifstream manifestInput(manifestInputFileName);
+        std::string manifestText(
+            (std::istreambuf_iterator<char>(manifestInput)),
+            std::istreambuf_iterator<char>());
+
+        // here we are creating offsets
+        for (const ZIPFileEntry &entry : otherEntries) {
+            std::string offsetTemplateName = entry.fileName + "-offset";
+            auto pos = 0;
+            auto entryDataOffset =
+                entry.fileRecordHeaderOffset + entry.FileRecordHeaderSize();
+            while ((pos = manifestText.find(offsetTemplateName, pos)) !=
+                   std::string::npos) {
+                manifestText.replace(pos, offsetTemplateName.length(),
+                                     std::to_string(entryDataOffset));
+            }
+        }
+
+        return manifestText;
+    }
+
     template <typename TSink>
     void WriteZIPEndOfCentralDirectoryRecord(
         TSink &sink, off_t offset, const std::vector<ZIPFileEntry> &entries)
@@ -222,21 +270,29 @@ namespace appx {
         sink.Write(sizeof(data), data);
     }
 
+    // this writes [Content_Types].xml
     template <typename TSink>
     ZIPFileEntry WriteContentTypesZIPFileEntry(
-        TSink &sink, off_t offset,
+        TSink &sink, off_t offset, bool isBundle,
         const std::vector<ZIPFileEntry> &otherEntries)
     {
         // we only need the filenames from otherEntries
         // [Content_Types].xml contains the ZIP-escaped
         // names, hence the use of sanitizedFileName
-        static const std::unordered_map<std::string, const char *>
-            sKnownContentTypes = {
-                {"dll", "application/x-msdownload"},
+        std::unordered_map<std::string, const char *> sKnownContentTypes = {
+            {"appx", "application/vnd.ms-appx"},
+            {"dll", "application/x-msdownload"},
                 {"exe", "application/x-msdownload"},
                 {"png", "image/png"},
-                {"xml", "application/vnd.ms-appx.manifest+xml"},
             };
+        if (isBundle) {
+            sKnownContentTypes.emplace(
+                "xml", "application/vnd.ms-appx.bundlemanifest+xml");
+        } else {
+            sKnownContentTypes.emplace("xml",
+                                       "application/vnd.ms-appx.manifest+xml");
+        }
+
         static const char *kDefaultContentType = "application/octet-stream";
 
         std::ostringstream ss;
@@ -313,7 +369,7 @@ namespace appx {
     template <typename TSink>
     ZIPFileEntry WriteAppxBlockMapZIPFileEntry(
         TSink &sink, off_t offset,
-        const std::vector<ZIPFileEntry> &otherEntries)
+        const std::vector<ZIPFileEntry> &otherEntries, bool isBundle)
     {
         // https://msdn.microsoft.com/en-us/library/windows/desktop/jj709951.aspx
         std::ostringstream ss;
@@ -325,6 +381,9 @@ namespace appx {
            << "xmlns=\"http://schemas.microsoft.com/appx/2010/blockmap\" "
            << "HashMethod=\"http://www.w3.org/2001/04/xmlenc#sha256\">";
         for (const ZIPFileEntry &entry : otherEntries) {
+            if (isBundle && _IsAPPXFile(entry.fileName)) {
+                continue;
+            }
             std::string fixedFileName = entry.fileName;
             std::replace(fixedFileName.begin(), fixedFileName.end(), '/', '\\');
             ss << "<File "
@@ -371,10 +430,34 @@ namespace appx {
     }
 
     template <typename TSink>
+    ZIPFileEntry WriteAppxBundleManifestZIPFileEntry(
+        TSink &sink, off_t offset, const std::string &inputFileName,
+        const std::string &archiveFileName, int compressionLevel,
+        const std::vector<ZIPFileEntry> &otherEntries)
+    {
+        return WriteZIPFileEntry(
+            sink, offset, archiveFileName, compressionLevel,
+            [&inputFileName, &otherEntries](auto &sink) {
+                std::string manifestText =
+                    _ManifestContentsAfterPopulatingOffsets(inputFileName,
+                                                            otherEntries);
+                sink.Write(manifestText.size(),
+                           reinterpret_cast<const std::uint8_t *>(
+                               manifestText.c_str()));
+            });
+    }
+
+    // Write the ZIP file record header and data to sink, reading the data using
+    // dataCallback.
+    //
+    // dataCallback is called as a function:
+    // template <typename TSink> void dataCallback(TSink &);
+    //
+    // dataCallback is called at most once.
+    template <typename TSink, typename TSource>
     ZIPFileEntry WriteZIPFileEntry(TSink &sink, off_t offset,
-                                   const std::string &inputFileName,
                                    const std::string &archiveFileName,
-                                   int compressionLevel)
+                                   int compressionLevel, TSource &&dataCallback)
     {
         std::uint32_t crc32;
         off_t uncompressedFileSize;
@@ -383,7 +466,10 @@ namespace appx {
         std::vector<ZIPBlock> blocks;
         ZIPCompressionType compressionType;
         {
-            FilePtr file = Open(inputFileName, "rb");
+            if (_IsAPPXFile(archiveFileName)) {
+                compressionLevel = Z_NO_COMPRESSION;
+            }
+
             CRC32Sink crc32Sink;
             VectorSink dataSink(data);
             // TODO(strager): Instead of writing the data to memory, write the
@@ -394,7 +480,7 @@ namespace appx {
                                                []() { return SHA256Sink(); });
                 auto sink =
                     MakeMultiSink(crc32Sink, offsetSink, dataSink, chunkSink);
-                Copy(file, sink);
+                dataCallback(sink);
                 chunkSink.Close();
                 for (const SHA256Sink &chunk : chunkSink.Chunks()) {
                     blocks.push_back(ZIPBlock(chunk.SHA256()));
@@ -453,7 +539,7 @@ namespace appx {
                 OffsetSink uncompressedOffsetSink;
                 auto sink =
                     MakeMultiSink(chunkSink, uncompressedOffsetSink, crc32Sink);
-                Copy(file, sink);
+                dataCallback(sink);
                 chunkSink.Close();
                 deflateSink.Close();
                 for (const Chunk &chunk : chunkSink.Chunks()) {
@@ -472,6 +558,22 @@ namespace appx {
         entry.WriteFileRecordHeader(sink);
         sink.Write(data.size(), data.data());
         return entry;
+    }
+
+    // Write the ZIP file record header and data to sink, reading the data from
+    // a file.
+    template <typename TSink>
+    ZIPFileEntry WriteZIPFileEntry(TSink &sink, off_t offset,
+                                   const std::string &inputFileName,
+                                   const std::string &archiveFileName,
+                                   int compressionLevel)
+    {
+        return WriteZIPFileEntry(sink, offset, archiveFileName,
+                                 compressionLevel,
+                                 [&inputFileName](auto &sink) {
+                                     FilePtr file = Open(inputFileName, "rb");
+                                     Copy(file, sink);
+                                 });
     }
 }
 }

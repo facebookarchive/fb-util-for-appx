@@ -30,6 +30,6 @@ namespace appx {
     void WriteAppx(
         const FilePtr &zip,
         const std::unordered_map<std::string, std::string> &fileNames,
-        const std::string *certPath, int compressionLevel);
+        const std::string *certPath, int compressionLevel, bool bundle);
 }
 }
