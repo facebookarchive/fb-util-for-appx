@@ -429,23 +429,21 @@ namespace appx {
         return entry;
     }
 
-    template <typename TSink>
-    ZIPFileEntry WriteAppxBundleManifestZIPFileEntry(
-        TSink &sink, off_t offset, const std::string &inputFileName,
-        const std::string &archiveFileName, int compressionLevel,
-        const std::vector<ZIPFileEntry> &otherEntries)
+    struct WriteAppxBundleManifestFunc
     {
-        return WriteZIPFileEntry(
-            sink, offset, archiveFileName, compressionLevel,
-            [&inputFileName, &otherEntries](auto &sink) {
-                std::string manifestText =
-                    _ManifestContentsAfterPopulatingOffsets(inputFileName,
-                                                            otherEntries);
-                sink.Write(manifestText.size(),
-                           reinterpret_cast<const std::uint8_t *>(
-                               manifestText.c_str()));
-            });
-    }
+        template <typename TSink>
+        void operator()(TSink &sink) const
+        {
+            std::string manifestText = _ManifestContentsAfterPopulatingOffsets(
+                this->inputFileName, this->otherEntries);
+            sink.Write(
+                manifestText.size(),
+                reinterpret_cast<const std::uint8_t *>(manifestText.c_str()));
+        }
+
+        const std::string &inputFileName;
+        const std::vector<ZIPFileEntry> &otherEntries;
+    };
 
     // Write the ZIP file record header and data to sink, reading the data using
     // dataCallback.
@@ -560,6 +558,19 @@ namespace appx {
         return entry;
     }
 
+    // Helper for WriteZIPFileEntry.
+    struct WriteZIPFileEntryFunc
+    {
+        template <typename TSink>
+        void operator()(TSink &sink) const
+        {
+            FilePtr file = Open(this->inputFileName, "rb");
+            Copy(file, sink);
+        }
+
+        const std::string &inputFileName;
+    };
+
     // Write the ZIP file record header and data to sink, reading the data from
     // a file.
     template <typename TSink>
@@ -570,10 +581,7 @@ namespace appx {
     {
         return WriteZIPFileEntry(sink, offset, archiveFileName,
                                  compressionLevel,
-                                 [&inputFileName](auto &sink) {
-                                     FilePtr file = Open(inputFileName, "rb");
-                                     Copy(file, sink);
-                                 });
+                                 WriteZIPFileEntryFunc{inputFileName});
     }
 }
 }

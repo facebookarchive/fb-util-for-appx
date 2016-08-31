@@ -119,12 +119,11 @@ namespace appx {
             }
 
             if (isBundle) {
-                ZIPFileEntry appxBundleManifestEntry = WriteAppxBundleManifestZIPFileEntry(
-                    sink,
-                    zipOffsetSink.Offset(),
-                    appxBundleManifest.second,
-                    appxBundleManifest.first, compressionLevel,
-                        zipFileEntries);
+                ZIPFileEntry appxBundleManifestEntry = WriteZIPFileEntry(
+                    sink, zipOffsetSink.Offset(), appxBundleManifest.first,
+                    compressionLevel,
+                    WriteAppxBundleManifestFunc{appxBundleManifest.second,
+                                                zipFileEntries});
                 zipFileEntries.emplace_back(std::move(appxBundleManifestEntry));
             }
 
