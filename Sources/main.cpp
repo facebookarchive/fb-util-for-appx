@@ -260,7 +260,7 @@ void PrintUsage(const char *programName)
             "  -f -            specify a mapping file through standard input\n"
             "  -h              show this usage text and exit\n"
             "  -b              produce APPXBUNDLE instead of APPX\n"
-            "  -o output-file  write the APPX (or APPXBUNDLE if -b is specified) "
+            "  -o output-file  write the APPX (or APPXBUNDLE if -b is specified)\n"
             "                  to the output-file (required)\n"
             "  -0, -1, -2, -3, -4, -5, -6, -7, -8, -9\n"
             "                  ZIP compression level\n"
