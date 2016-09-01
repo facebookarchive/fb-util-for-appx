@@ -21,7 +21,7 @@ Prerequisites:
 
 Supported build and host platforms and toolchains:
 
-* GNU/Linux with GCC 4.8.1
+* GNU/Linux with GCC 4.8.1 or GCC 4.9
 * Mac OS X 10.10.5 with clang 3.6.0
 
 Build:
