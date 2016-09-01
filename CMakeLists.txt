@@ -35,7 +35,7 @@ target_link_libraries(appx
                       ${ZLIB_LIBRARIES})
 install(TARGETS appx RUNTIME DESTINATION bin)
 
-# Check for C++14 support.
+# Check for C++11 support.
 function (APPX_CHECK_TEMPLATE_USING_WITH_FLAGS NAME FLAGS)
   set(CMAKE_REQUIRED_FLAGS "${FLAGS}")
   check_cxx_source_compiles("template<typename T>
@@ -56,20 +56,13 @@ function (APPX_CXX_STD_FLAGS OUT_VAR)
     set("${OUT_VAR}" "" PARENT_SCOPE)
     return ()
   endif ()
-  appx_check_template_using_with_flags(APPX_HAS_TEMPLATE_USING_STD_CXX14
-                                       "-std=c++14")
-  if (APPX_HAS_TEMPLATE_USING_STD_CXX14)
-    set("${OUT_VAR}" "-std=c++14" PARENT_SCOPE)
+  appx_check_template_using_with_flags(APPX_HAS_TEMPLATE_USING_STD_CXX11
+                                       "-std=c++11")
+  if (APPX_HAS_TEMPLATE_USING_STD_CXX11)
+    set("${OUT_VAR}" "-std=c++11" PARENT_SCOPE)
     return ()
   endif ()
-  # GCC 4.8.1
-  appx_check_template_using_with_flags(APPX_HAS_TEMPLATE_USING_STD_GNUXX1Y
-                                       "-std=gnu++1y")
-  if (APPX_HAS_TEMPLATE_USING_STD_GNUXX1Y)
-    set("${OUT_VAR}" "-std=gnu++1y" PARENT_SCOPE)
-    return ()
-  endif ()
-  message(FATAL_ERROR "Compiler lacks C++14 support")
+  message(FATAL_ERROR "Compiler lacks C++11 support")
 endfunction ()
 appx_cxx_std_flags(APPX_CXX_STD_FLAGS)
 set_property(TARGET appx
