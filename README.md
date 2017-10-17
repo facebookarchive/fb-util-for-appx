@@ -28,11 +28,25 @@ Build:
 
     mkdir Build && cd Build && cmake .. && make
 
-On OS X, you'll need to explicitly point cmake to your OpenSSL
+On macOS, you'll need to explicitly point cmake to your OpenSSL
 installation. The easiest method is to install OpenSSL using
 [Homebrew](http://brew.sh/) and then pass `-DOPENSSL_ROOT_DIR=$(brew --prefix openssl)`
 when invoking cmake. You can also compile OpenSSL [from source](https://github.com/openssl/openssl)
 and set `OPENSSL_ROOT_DIR` accordingly.
+
+The `-DSTATIC_BUILD=OFF` option is not supported on macOS. To create a static (statically links zlib and openssl) `appx` executable on macOS the following cmake command can be used:
+
+```bash
+cmake .. -DSTATIC_BUILD=OFF -DCMAKE_BUILD_TYPE=RELEASE -DOPENSSL_ROOT_DIR=$(brew --prefix openssl) -DOPENSSL_CRYPTO_LIBRARY=/usr/local/opt/openssl/lib/libcrypto.a -DOPENSSL_SSL_LIBRARY=/usr/local/opt/openssl/lib/libssl.a  -DZLIB_LIBRARY=/usr/local/opt/zlib/lib/libz.a
+```
+To test whether the static libraries have been used, the `otool -L appx` command should give the following output (versions may vary):
+
+```bash
+otool -L appx
+appx:
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1252.0.0)
+	/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 400.9.0)
+```
 
 Install:
 
