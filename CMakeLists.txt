@@ -50,7 +50,7 @@ else()
  target_link_libraries(appx
                       PRIVATE
                       ${OPENSSL_LIBRARIES}
-                      ${ZLIB_LIBRARIES})
+                      ${ZLIB_LIBRARIES} -ldl )
 endif()
 			   
 						   
