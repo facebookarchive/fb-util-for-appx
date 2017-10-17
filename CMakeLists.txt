@@ -13,6 +13,16 @@ enable_testing()
 project(appx)
 
 include(CheckCXXSourceCompiles)
+
+option(STATIC_BUILD "creates a static executable" OFF)
+
+if(STATIC_BUILD)
+ #MESSAGE("STATIC_BUILD=ON: creating static executable")
+ SET(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+ SET(BUILD_SHARED_LIBRARIES OFF)
+ SET(CMAKE_EXE_LINKER_FLAGS "-static")
+endif()
+
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 
@@ -29,11 +39,23 @@ target_include_directories(appx
                            PrivateHeaders
                            ${OPENSSL_INCLUDE_DIR}
                            ${ZLIB_INCLUDE_DIRS})
-target_link_libraries(appx
+						   
+						   
+if(STATIC_BUILD)
+ target_link_libraries(appx
+                      PRIVATE
+                      ${OPENSSL_LIBRARIES}
+                      ${ZLIB_LIBRARIES} -ldl -static-libgcc -static-libstdc++)
+else()
+ target_link_libraries(appx
                       PRIVATE
                       ${OPENSSL_LIBRARIES}
                       ${ZLIB_LIBRARIES})
+endif()
+			   
+						   
 install(TARGETS appx RUNTIME DESTINATION bin)
+
 
 # Check for C++11 support.
 function (APPX_CHECK_TEMPLATE_USING_WITH_FLAGS NAME FLAGS)
@@ -108,3 +130,18 @@ appx_add_test(TestXMLEscaping)
 appx_add_test(TestZIPEscaping)
 appx_add_test(TestContentTypes)
 appx_add_test(TestEmptyFile)
+
+MESSAGE(STATUS "--------------------------------------------------------------------------------")
+MESSAGE(STATUS "CMAKE BUILD CONFIG")
+MESSAGE(STATUS "--------------------------------------------------------------------------------")
+MESSAGE(STATUS "Build type:                  " ${CMAKE_BUILD_TYPE})
+MESSAGE(STATUS "Compiler cxx debug flags:    " ${CMAKE_CXX_FLAGS_DEBUG})
+MESSAGE(STATUS "Compiler cxx release flags:  " ${CMAKE_CXX_FLAGS_RELEASE})
+MESSAGE(STATUS "Compiler cxx min size flags: " ${CMAKE_CXX_FLAGS_MINSIZEREL})
+MESSAGE(STATUS "Compiler cxx flags:          " ${CMAKE_CXX_FLAGS})
+MESSAGE(STATUS "--------------------------------------------------------------------------------")
+MESSAGE(STATUS "CMAKE BUILD OPTIONS")
+MESSAGE(STATUS "--------------------------------------------------------------------------------")
+MESSAGE(STATUS "Static build:                " ${STATIC_BUILD})
+MESSAGE(STATUS "--------------------------------------------------------------------------------")		
+
