@@ -256,6 +256,9 @@ void PrintUsage(const char *programName)
             "\n"
                 "Options:\n"
             "  -c pfx-file     sign the APPX with the private key file\n"
+            "  -m module-file  an opensc module to use for signing\n"
+            "  -s slot         a smartcart slot id\n"
+            "  -k key-id       a smartcard key id\n"
             "  -f map-file     specify inputs from a mapping file\n"
             "  -f -            specify a mapping file through standard input\n"
             "  -h              show this usage text and exit\n"
@@ -279,6 +282,10 @@ void PrintUsage(const char *programName)
             "  [Files]\n"
             "  \"/path/to/local/file.exe\" \"appx_file.exe\"\n"
             "\n"
+            "Signing through a smartcard can be achieved as such:\n"
+            "-m /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so -s 1 -k 0 -p passphrase\n"
+            "If no passphrase is provided, APPX_PIV_PIN environment variable will be used\n"
+            "\n"
             "Supported target systems:\n"
             "  Windows 10 (UAP)\n"
             "  Windows 10 Mobile\n",
@@ -290,10 +297,14 @@ int main(int argc, char **argv) try {
     const char *programName = argv[0];
     const char *certPath = NULL;
     const char *appxPath = NULL;
+    const char *modulePath = NULL;
+    const char *pivPin = NULL;
+    int slotId = -1;
+    int keyId = -1;
     int compressionLevel = Z_NO_COMPRESSION;
     bool isBundle = false;
     std::unordered_map<std::string, std::string> fileNames;
-    while (int c = getopt(argc, argv, "0123456789bc:f:ho:")) {
+    while (int c = getopt(argc, argv, "0123456789bc:f:ho:m:s:k:p:")) {
         if (c == -1) {
             break;
         }
@@ -337,6 +348,18 @@ int main(int argc, char **argv) try {
             case 'o':
                 appxPath = optarg;
                 break;
+            case 'm':
+                modulePath = optarg;
+                break;
+            case 's':
+                slotId = atoi(optarg);
+                break;
+            case 'k':
+                keyId = atoi(optarg);
+                break;
+            case 'p':
+                pivPin = optarg;
+                break;
             case '?':
                 fprintf(stderr, "Unknown option: %c\n", optopt);
                 PrintUsage(programName);
@@ -350,6 +373,35 @@ int main(int argc, char **argv) try {
         fprintf(stderr, "Missing -o\n");
         PrintUsage(programName);
         return 1;
+    }
+    if (modulePath != nullptr && certPath != nullptr) {
+        fprintf(stderr, "Incompatible -c & -m options provided\n");
+        return 1;
+    }
+    if (modulePath != nullptr) {
+        if (slotId == -1) {
+            fprintf(stderr, "Missing -s parameter for smartcard signing\n");
+            return 1;
+        }
+        if (slotId < 0) {
+            fprintf(stderr, "Invalid value provided for -s parameter: %d\n", slotId);
+            return 1;
+        }
+        if (keyId == -1) {
+            fprintf(stderr, "Missing -k parameter for smartcard signing\n");
+            return 1;
+        }
+        if (keyId < 0 || keyId > UINT8_MAX) {
+            fprintf(stderr, "Invalid value provided for -k parameter: %d\n", keyId);
+            return 1;
+        }
+        if (pivPin == nullptr) {
+            pivPin = getenv("APPX_PIV_PIN");
+            if (pivPin == nullptr) {
+                fprintf(stderr, "No PIV passphrase provided\n");
+                return 1;
+            }
+        }
     }
     argc -= optind;
     argv += optind;
@@ -374,10 +426,21 @@ int main(int argc, char **argv) try {
         fprintf(stderr, "You need to provide AppxBundleManifest.xml!\n");
         return 1;
     }
-    std::string certPathString = certPath ?: "";
     FilePtr appx = Open(appxPath, "wb");
-    WriteAppx(appx, fileNames, certPath ? &certPathString : nullptr,
-              compressionLevel, isBundle);
+    if (certPath != nullptr || modulePath != nullptr )
+    {
+        facebook::appx::SigningParams signingParams;
+        if (certPath != nullptr)
+            signingParams = std::make_tuple(certPath, "", 0u, 0u, "");
+        else
+            signingParams = std::make_tuple("", modulePath, slotId, keyId, pivPin);
+        WriteAppx(appx, fileNames, &signingParams, compressionLevel, isBundle);
+    }
+    else
+    {
+        WriteAppx(appx, fileNames, nullptr, compressionLevel, isBundle);
+    }
+
     return 0;
 } catch (std::exception &e) {
     fprintf(stderr, "%s\n", e.what());
