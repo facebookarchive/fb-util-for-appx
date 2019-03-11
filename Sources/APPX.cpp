@@ -53,7 +53,7 @@ namespace appx {
             off_t uncompressedSize;
             {
                 OpenSSLPtr<PKCS7, PKCS7_free> signature =
-                    Sign(certPath, digests);
+                    SignFromCertFile(certPath, digests);
                 std::vector<std::uint8_t> signatureData =
                     GetSignatureBytes(signature.get());
 

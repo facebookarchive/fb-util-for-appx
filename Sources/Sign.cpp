@@ -356,8 +356,8 @@ namespace appx {
         }
     }
 
-    OpenSSLPtr<PKCS7, PKCS7_free> Sign(const std::string &certPath,
-                                       const APPXDigests &digests)
+    OpenSSLPtr<PKCS7, PKCS7_free> SignFromCertFile(const std::string &certPath,
+                                                   const APPXDigests &digests)
     {
         OpenSSL_add_all_algorithms();
         oid::Register();
