@@ -12,6 +12,7 @@
 #include <cassert>
 #include <cstdint>
 #include <openssl/asn1t.h>
+#include <libp11.h>
 #include <vector>
 
 namespace facebook {
@@ -443,6 +444,83 @@ namespace appx {
 
         CertificateFile certFile = ReadCertificateFile(certPath);
         return Sign(std::move(certFile), digests);
+    }
+
+    OpenSSLPtr<PKCS7, PKCS7_free> SignFromSmartCard(const std::string& modulePath,
+                                                    uint32_t slotId,
+                                                    uint8_t keyId,
+                                                    const std::string &pivPin,
+                                                    const APPXDigests &digests)
+    {
+        OpenSSL_add_all_algorithms();
+        oid::Register();
+        OpenSSLPtr<PKCS11_CTX, PKCS11_CTX_free> ctx{ PKCS11_CTX_new() };
+        if (!ctx) {
+            throw OpenSSLException();
+        }
+
+        PKCS11_CTX_load( ctx.get(), modulePath.c_str() );
+        OpenSSLPtr<PKCS11_CTX, PKCS11_CTX_unload> loadedCtx{ ctx.get() };
+
+        PKCS11_SLOT* slots;
+        uint32_t nbSlots;
+
+        if (PKCS11_enumerate_slots( ctx.get(), &slots, &nbSlots )) {
+            throw OpenSSLException();
+        }
+        std::unique_ptr<PKCS11_SLOT, std::function<void(PKCS11_SLOT*)>>
+            slotsReleaser{slots, [nbSlots, c = ctx.get()](PKCS11_SLOT* slots) {
+                    PKCS11_release_all_slots(c, slots, nbSlots);
+            }};
+
+        PKCS11_SLOT* s = nullptr;
+        while ((s = PKCS11_find_next_token(ctx.get(), slots, nbSlots, s))) {
+            PKCS11_KEY* keys;
+            uint32_t nbKeys;
+            if (PKCS11_get_slotid_from_slot(s) != slotId)
+                continue;
+
+            PKCS11_CERT* certs;
+            uint32_t nbCerts;
+
+            if (PKCS11_enumerate_certs( s->token, &certs, &nbCerts))
+                continue;
+            auto cert = &certs[0];
+
+            // Check that there is a key that matches our request before loging in
+            if (PKCS11_enumerate_public_keys(s->token, &keys, &nbKeys))
+                throw OpenSSLException();
+            PKCS11_KEY* k = nullptr;
+            for (auto i = 0u; i < nbKeys; ++i) {
+                k = &keys[i];
+                // If there is an id and it matches, this is the correct slot/id
+                // pair we're looking for. Now we'll need to fetch the private key
+                if (k->id && k->id[0] == keyId)
+                    break;
+            }
+            if (!k)
+                continue;
+
+            PKCS11_login( s, 0, pivPin.c_str() );
+
+            OpenSSLPtr<EVP_PKEY, EVP_PKEY_free> privateKey{
+                PKCS11_get_private_key(k)
+            };
+            if (!privateKey)
+                continue;
+            OpenSSLPtr<X509, X509_free> certificate{
+                X509_dup(cert->x509)
+            };
+            if (!X509_check_private_key(certificate.get(), privateKey.get()))
+                continue;
+
+            CertificateFile certFile{std::move(privateKey),
+                                     std::move(certificate)};
+            return Sign(std::move(certFile), digests);
+        }
+        fprintf(stderr, "No usable key was found with slot %u and key id %u\n",
+                slotId, keyId);
+        return nullptr;
     }
 }
 }
