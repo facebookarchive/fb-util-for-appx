@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cstdint>
 #include <openssl/asn1t.h>
+#include <libp11.h>
 #include <vector>
 
 namespace facebook {
@@ -352,90 +353,172 @@ namespace appx {
             return CertificateFile{std::move(privateKey),
                                    std::move(certificate)};
         }
+
+        OpenSSLPtr<PKCS7, PKCS7_free> Sign(CertificateFile certFile,
+                                           const APPXDigests &digests)
+        {
+            // Create the signature.
+            OpenSSLPtr<PKCS7, PKCS7_free> signature(PKCS7_new());
+            if (!signature) {
+                throw OpenSSLException();
+            }
+            if (!PKCS7_set_type(signature.get(), NID_pkcs7_signed)) {
+                throw OpenSSLException();
+            }
+            PKCS7_SIGNER_INFO *signerInfo =
+                PKCS7_add_signature(signature.get(), certFile.certificate.get(),
+                                    certFile.privateKey.get(), EVP_sha256());
+            if (!signerInfo) {
+                throw OpenSSLException();
+            }
+            AddAttributes(signerInfo);
+
+            if (!PKCS7_content_new(signature.get(), NID_pkcs7_data)) {
+                throw OpenSSLException();
+            }
+            if (!PKCS7_add_certificate(signature.get(),
+                                       certFile.certificate.get())) {
+                throw OpenSSLException();
+            }
+
+            asn1::SPCIndirectDataContentPtr idc(asn1::SPCIndirectDataContent_new());
+            MakeIndirectDataContent(*idc, digests);
+            EncodedASN1 idcEncoded =
+                EncodedASN1::FromItem<asn1::SPCIndirectDataContent,
+                                      asn1::i2d_SPCIndirectDataContent>(idc.get());
+
+            // TODO(strager): Use lower-level APIs to avoid OpenSSL injecting the
+            // signingTime attribute.
+            BIOPtr signedData(PKCS7_dataInit(signature.get(), NULL));
+            if (!signedData) {
+                throw OpenSSLException();
+            }
+            // Per RFC 2315 section 9.3:
+            // "Only the contents octets of the DER encoding of that field are
+            // digested, not the identifier octets or the length octets."
+            // Strip off the length.
+            if (idcEncoded.Size() < 2) {
+                throw std::runtime_error("NYI");
+            }
+            if ((idcEncoded.Data()[1] & 0x80) == 0x00) {
+                throw std::runtime_error("NYI");
+            }
+            std::size_t skip = 4;
+            if (BIO_write(signedData.get(), idcEncoded.Data() + skip,
+                          idcEncoded.Size() - skip) != idcEncoded.Size() - skip) {
+                throw OpenSSLException();
+            }
+            if (BIO_flush(signedData.get()) != 1) {
+                throw OpenSSLException();
+            }
+            if (!PKCS7_dataFinal(signature.get(), signedData.get())) {
+                throw OpenSSLException();
+            }
+
+            // Set the content to an SpcIndirectDataContent. Must be done after
+            // digesting the signed data.
+            OpenSSLPtr<PKCS7, PKCS7_free> content(PKCS7_new());
+            if (!content) {
+                throw OpenSSLException();
+            }
+            content->type = OBJ_txt2obj(oid::kSPCIndirectData, 1);
+            ASN1_TYPEPtr idcSequence = idcEncoded.ToSequenceType();
+            content->d.other = idcSequence.get();
+            if (!PKCS7_set_content(signature.get(), content.get())) {
+                throw OpenSSLException();
+            }
+            content.release();
+            idcSequence.release();
+
+            return signature;
+        }
     }
 
-    OpenSSLPtr<PKCS7, PKCS7_free> Sign(const std::string &certPath,
-                                       const APPXDigests &digests)
+    OpenSSLPtr<PKCS7, PKCS7_free> SignFromCertFile(const std::string &certPath,
+                                                   const APPXDigests &digests)
     {
         OpenSSL_add_all_algorithms();
         oid::Register();
 
         CertificateFile certFile = ReadCertificateFile(certPath);
+        return Sign(std::move(certFile), digests);
+    }
 
-        // Create the signature.
-        OpenSSLPtr<PKCS7, PKCS7_free> signature(PKCS7_new());
-        if (!signature) {
-            throw OpenSSLException();
-        }
-        if (!PKCS7_set_type(signature.get(), NID_pkcs7_signed)) {
-            throw OpenSSLException();
-        }
-        PKCS7_SIGNER_INFO *signerInfo =
-            PKCS7_add_signature(signature.get(), certFile.certificate.get(),
-                                certFile.privateKey.get(), EVP_sha256());
-        if (!signerInfo) {
-            throw OpenSSLException();
-        }
-        AddAttributes(signerInfo);
-
-        if (!PKCS7_content_new(signature.get(), NID_pkcs7_data)) {
-            throw OpenSSLException();
-        }
-        if (!PKCS7_add_certificate(signature.get(),
-                                   certFile.certificate.get())) {
+    OpenSSLPtr<PKCS7, PKCS7_free> SignFromSmartCard(const std::string& modulePath,
+                                                    uint32_t slotId,
+                                                    uint8_t keyId,
+                                                    const std::string &pivPin,
+                                                    const APPXDigests &digests)
+    {
+        OpenSSL_add_all_algorithms();
+        oid::Register();
+        OpenSSLPtr<PKCS11_CTX, PKCS11_CTX_free> ctx{ PKCS11_CTX_new() };
+        if (!ctx) {
             throw OpenSSLException();
         }
 
-        asn1::SPCIndirectDataContentPtr idc(asn1::SPCIndirectDataContent_new());
-        MakeIndirectDataContent(*idc, digests);
-        EncodedASN1 idcEncoded =
-            EncodedASN1::FromItem<asn1::SPCIndirectDataContent,
-                                  asn1::i2d_SPCIndirectDataContent>(idc.get());
+        PKCS11_CTX_load( ctx.get(), modulePath.c_str() );
+        OpenSSLPtr<PKCS11_CTX, PKCS11_CTX_unload> loadedCtx{ ctx.get() };
 
-        // TODO(strager): Use lower-level APIs to avoid OpenSSL injecting the
-        // signingTime attribute.
-        BIOPtr signedData(PKCS7_dataInit(signature.get(), NULL));
-        if (!signedData) {
-            throw OpenSSLException();
-        }
-        // Per RFC 2315 section 9.3:
-        // "Only the contents octets of the DER encoding of that field are
-        // digested, not the identifier octets or the length octets."
-        // Strip off the length.
-        if (idcEncoded.Size() < 2) {
-            throw std::runtime_error("NYI");
-        }
-        if ((idcEncoded.Data()[1] & 0x80) == 0x00) {
-            throw std::runtime_error("NYI");
-        }
-        std::size_t skip = 4;
-        if (BIO_write(signedData.get(), idcEncoded.Data() + skip,
-                      idcEncoded.Size() - skip) != idcEncoded.Size() - skip) {
-            throw OpenSSLException();
-        }
-        if (BIO_flush(signedData.get()) != 1) {
-            throw OpenSSLException();
-        }
-        if (!PKCS7_dataFinal(signature.get(), signedData.get())) {
-            throw OpenSSLException();
-        }
+        PKCS11_SLOT* slots;
+        uint32_t nbSlots;
 
-        // Set the content to an SpcIndirectDataContent. Must be done after
-        // digesting the signed data.
-        OpenSSLPtr<PKCS7, PKCS7_free> content(PKCS7_new());
-        if (!content) {
+        if (PKCS11_enumerate_slots( ctx.get(), &slots, &nbSlots )) {
             throw OpenSSLException();
         }
-        content->type = OBJ_txt2obj(oid::kSPCIndirectData, 1);
-        ASN1_TYPEPtr idcSequence = idcEncoded.ToSequenceType();
-        content->d.other = idcSequence.get();
-        if (!PKCS7_set_content(signature.get(), content.get())) {
-            throw OpenSSLException();
-        }
-        content.release();
-        idcSequence.release();
+        std::unique_ptr<PKCS11_SLOT, std::function<void(PKCS11_SLOT*)>>
+            slotsReleaser{slots, [nbSlots, c = ctx.get()](PKCS11_SLOT* slots) {
+                    PKCS11_release_all_slots(c, slots, nbSlots);
+            }};
 
-        return signature;
+        PKCS11_SLOT* s = nullptr;
+        while ((s = PKCS11_find_next_token(ctx.get(), slots, nbSlots, s))) {
+            PKCS11_KEY* keys;
+            uint32_t nbKeys;
+            if (PKCS11_get_slotid_from_slot(s) != slotId)
+                continue;
+
+            PKCS11_CERT* certs;
+            uint32_t nbCerts;
+
+            if (PKCS11_enumerate_certs( s->token, &certs, &nbCerts))
+                continue;
+            auto cert = &certs[0];
+
+            // Check that there is a key that matches our request before loging in
+            if (PKCS11_enumerate_public_keys(s->token, &keys, &nbKeys))
+                throw OpenSSLException();
+            PKCS11_KEY* k = nullptr;
+            for (auto i = 0u; i < nbKeys; ++i) {
+                k = &keys[i];
+                // If there is an id and it matches, this is the correct slot/id
+                // pair we're looking for. Now we'll need to fetch the private key
+                if (k->id && k->id[0] == keyId)
+                    break;
+            }
+            if (!k)
+                continue;
+
+            PKCS11_login( s, 0, pivPin.c_str() );
+
+            OpenSSLPtr<EVP_PKEY, EVP_PKEY_free> privateKey{
+                PKCS11_get_private_key(k)
+            };
+            if (!privateKey)
+                continue;
+            OpenSSLPtr<X509, X509_free> certificate{
+                X509_dup(cert->x509)
+            };
+            if (!X509_check_private_key(certificate.get(), privateKey.get()))
+                continue;
+
+            CertificateFile certFile{std::move(privateKey),
+                                     std::move(certificate)};
+            return Sign(std::move(certFile), digests);
+        }
+        fprintf(stderr, "No usable key was found with slot %u and key id %u\n",
+                slotId, keyId);
+        return nullptr;
     }
 }
 }

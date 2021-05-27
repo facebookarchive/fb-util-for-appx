@@ -8,6 +8,7 @@
 #include <APPX/File.h>
 #include <APPX/Sign.h>
 #include <APPX/Sink.h>
+#include <APPX/APPX.h>
 #include <APPX/ZIP.h>
 #include <cstdint>
 #include <iostream>
@@ -42,7 +43,7 @@ namespace appx {
 
         // Creates the AppxSignature.p7x file and inserts it into the ZIP.
         template <typename TSink>
-        ZIPFileEntry WriteSignature(TSink &sink, const std::string &certPath,
+        ZIPFileEntry WriteSignature(TSink &sink, const SigningParams &signingParams,
                                     const APPXDigests &digests, off_t offset)
         {
             // AppxSignature.p7x *must* be DEFLATEd.
@@ -50,8 +51,16 @@ namespace appx {
             std::uint32_t crc32;
             off_t uncompressedSize;
             {
-                OpenSSLPtr<PKCS7, PKCS7_free> signature =
-                    Sign(certPath, digests);
+                const auto& certPath = std::get<0>( signingParams );
+                OpenSSLPtr<PKCS7, PKCS7_free> signature;
+                if (!certPath.empty())
+                    signature = SignFromCertFile(certPath, digests);
+                else
+                    signature = SignFromSmartCard(std::get<1>(signingParams),
+                                                  std::get<2>(signingParams),
+                                                  std::get<3>(signingParams),
+                                                  std::get<4>(signingParams),
+                                                  digests);
                 std::vector<std::uint8_t> signatureData =
                     GetSignatureBytes(signature.get());
 
@@ -85,7 +94,7 @@ namespace appx {
     void WriteAppx(
         const FilePtr &zip,
         const std::unordered_map<std::string, std::string> &fileNames,
-        const std::string *certPath, int compressionLevel, bool isBundle)
+        const SigningParams *signingParams, int compressionLevel, bool isBundle)
     {
         FileSink zipRawSink(zip.get());
         OffsetSink zipOffsetSink;
@@ -154,9 +163,9 @@ namespace appx {
         }
 
         // Sign and write the signature.
-        if (certPath) {
+        if (signingParams) {
             zipFileEntries.emplace_back(WriteSignature(
-                zipSink, *certPath, digests, zipOffsetSink.Offset()));
+                zipSink, *signingParams, digests, zipOffsetSink.Offset()));
         }
 
         // Write the directory.

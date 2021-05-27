@@ -18,8 +18,14 @@ namespace appx {
 
     // Creates a PKCS7 signature for the given APPX digest using the given
     // certificate.
-    OpenSSLPtr<PKCS7, PKCS7_free> Sign(const std::string &certPath,
-                                       const APPXDigests &digests);
+    OpenSSLPtr<PKCS7, PKCS7_free> SignFromCertFile(const std::string &certPath,
+                                                   const APPXDigests &digests);
+
+    OpenSSLPtr<PKCS7, PKCS7_free> SignFromSmartCard(const std::string& modulePath,
+                                                    uint32_t slotId,
+                                                    uint8_t keyId,
+                                                    const std::string& pivPin,
+                                                    const APPXDigests &digests);
 
     // A set of digests required when signing APPX files.
     struct APPXDigests

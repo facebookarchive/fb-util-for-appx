@@ -11,8 +11,10 @@ enable_testing()
 project(appx)
 
 include(CheckCXXSourceCompiles)
+include(FindPkgConfig)
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
+pkg_check_modules(LIBP11 libp11 REQUIRED)
 
 add_executable(appx
                Sources/APPX.cpp
@@ -26,11 +28,13 @@ target_include_directories(appx
                            PRIVATE
                            PrivateHeaders
                            ${OPENSSL_INCLUDE_DIR}
-                           ${ZLIB_INCLUDE_DIRS})
+                           ${ZLIB_INCLUDE_DIRS}
+                           ${LIBP11_INCLUDE_DIRS})
 target_link_libraries(appx
                       PRIVATE
                       ${OPENSSL_LIBRARIES}
-                      ${ZLIB_LIBRARIES})
+                      ${ZLIB_LIBRARIES}
+                      ${LIBP11_LIBRARIES})
 install(TARGETS appx RUNTIME DESTINATION bin)
 
 # Check for C++11 support.
